@@ -1,0 +1,10 @@
+[package]
+name = "hive"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+axum = {version = "0.6.20", features = ["headers"]}
+deadpool-diesel = { version = "0.6.1", features = ["sqlite"] }
+diesel = { version = "2.2.0", features = ["sqlite", "returning_clauses_for_sqlite_3_35"] }
+tokio = { version = "1.0", features = ["full"] }
