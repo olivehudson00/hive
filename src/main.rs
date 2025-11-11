@@ -5,17 +5,28 @@
 pub mod models;
 pub mod schema;
 
+use std::error::Error;
+use std::fmt::Write as FmtWrite;
 use std::fs::File;
-use std::io::Write;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::io::Write as IoWrite;
+use std::path::{Path, PathBuf};
 
 use axum::{
-    extract::{Extension, Multipart, Path},
+    extract::{Multipart, Path as AxumPath, State},
+    response::Html,
+    routing::{get, post},
     Router,
     Server,
 };
 use deadpool_diesel::sqlite::{Manager, Pool, Runtime};
+use diesel::prelude::*;
+use flate2::read::GzDecoder;
+use tar::Archive;
+use tempfile::TempDir;
 use tokio::process::Command;
+
+use crate::models::*;
+use crate::schema::*;
 
 fn date(timestamp: u64) -> String {
     return format!("{}", timestamp);
@@ -23,139 +34,98 @@ fn date(timestamp: u64) -> String {
 
 async fn home(
     State(pool): State<Pool>,
-    Path(userid): Path<i32>
-) -> String {
-    let conn = pool.get().await.map_err(internal)?;
+) -> Result<Html<String>, String> {
+    let conn = pool.get().await.map_err(|e| format!("aaaa {}", e))?;
 
-    let user = conn.interact(|conn| {
-        schema::users::table
-            .filter(schema::users::id.eq(userid))
-            .select(User::as_select())
-            .get_result(conn)
-    }).await.map_err(internal)?.map_err(internal)?;
-    let programs = conn.interact(|conn| {
-        Enrolment::belonging_to(&user)
-            .inner_join(programs::table)
-            .select(Program::as_select())
-            .load(conn)
-    }).await.map_err(internal)?.map_err(internal)?;
-    let projects = conn.interact(|conn| {
-        Project::belonging_to(&programs)
-            .select(Project::as_select())
-            .load(conn)
-    }).await.map_err(internal)?.map_err(internal)?;
-    let programs = projects
-        .grouped_by(&programs)
-        .into_iter()
-        .zip(programs)
-        .map(|(projects, program)| (program, projects))
-        .collect::<Vec<(Program, Vec<Project>)>>;
-
-    let mut string = String::new();
-    for (program, projects) in programs {
-        write!(string, "<details open=''>\n<summary>{}</summary>\n", program.name);
-        for project in projects {
-            write!(string, "<a href='/{}/{}'>{}</a>", userid, project.id, project.name);
-        }
-        write!(string, "</details>\n");
-    }
-
-    return string;
-}
-
-async fn submit(
-    State(pool): State<Pool>,
-    Path(userid): Path<i32>,
-    Path(projectid): Path<i32>
-) -> String {
-    let conn = pool.get().await.map_err(internal)?;
-
-    let project = conn.interact(|conn| {
+    let projects: Vec<Project> = conn.interact(|conn| {
         schema::projects::table
-            .filter(schema::projects::id.eq(projectid))
             .select(Project::as_select())
-            .get_result(conn)
-    }).await.map_err(internal)?.map_err(internal)?;
-    let submissions = conn.interact(|conn| {
-        Submission::belonging_to(&project)
-            .filter(schema::submissions::.user.eq(userid))
-            .select(Submission::as_select())
-            .order(schema::submissions::time.desc())
             .load(conn)
-    }).await.map_err(internal)?.map_err(internal)?;
+    }).await.map_err(|e| format!("{}", e))?.map_err(|e| format!("{}", e))?;
 
     let mut string = String::new();
-    write!(string, "<form action='/{}/{}' method='post' enctype='multipart/form-data'>\n\
-        <input type='file' name='file'>\n<input type='submit' value='Submit'>\n</form>\n",
-        userid, project.id);
-
-    if submissions.len() == 0 {
-        write!(string, "<p>No submissions yet.</p>\n");
-        return string;
+    for project in projects {
+        write!(string, "<form action='/{}' method='post' enctype='multipart/form-data'>\n", project.id);
+        write!(string, "<label for='{}'>Select a file: </label>\n", project.id);
+        write!(string, "<input type='file' id='{}' name='file'>\n", project.id);
+        write!(string, "<input type='submit' value='Submit to {}'>", project.name);
+        write!(string, "</form>\n");
     }
-
-    for submission in submissions.iter().rev() {
-        write!("<details open=''>\n");
-        write!("<summary>{}</summary>\n", date(submission.time));
-        write!("<p>{}</p>\n", match submission.results {
-            Some(results) => results,
-            None => "Awaiting results...",
-        });
-        write!("</details>\n")
-    }
-    return string;
+    return Ok(axum::response::Html(string));
 }
 
 async fn accept(
     State(pool): State<Pool>,
-    Path(userid): Path<i32>,
-    Path(projectid): Path<i32>,
-    form: Multipart
-) -> Result<(), Box<dyn Error>> {
-    
+    AxumPath(projectid): AxumPath<i32>,
+    mut form: Multipart,
+) -> Result<String, String> {
+    let conn = pool.get().await.map_err(|e| format!("{}", e))?;
 
-    /* get only first file, ignore any others */
-    match form.next_field().await {
-        Ok(Some(field)) => {
-            let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
-            let name = format!("{}-{}", userid, now);
-            let data = field.bytes().await.unwrap();
+    let project = conn.interact(move |conn| {
+        schema::projects::table
+            .filter(projects::id.eq(projectid))
+            .select(Project::as_select())
+            .load(conn)
+    }).await.map_err(|e| format!("{}", e))?.map_err(|e| format!("{}", e))?;
 
-            let mut file = File::create(name)?;
-            file.write_all(data)?;
-
-            let mut command = Command::new(test)
-                .arg(name)
-                .output()
-                .await
-                .map_err(internal)?;
-
-            
-        }
-        Err(error) => todo!(),
-        _ => (),
+    if project.len() == 0 {
+        return Err("no project found".to_string());
     }
+
+    let dir = TempDir::new().map_err(|e| format!("{}", e))?;
+
+    let mut path = PathBuf::new();
+    path.push(dir.path());
+
+    /* TODO */
+    std::env::set_current_dir(&path);
+
+    let tar = GzDecoder::new(&*project[0].test);
+    let mut archive = Archive::new(tar);
+    archive.unpack(&path);
+
+    path.push("user");
+    let field = form.next_field().await.map_err(|e| format!("ugh {}", e))?.unwrap();
+    let mut file = File::create(&path).map_err(|e| format!("{}", e))?;
+    file.write_all(&field.bytes().await.map_err(|e| format!("ughhhh {}", e))?).map_err(|e| format!("{}", e))?;
+    path.pop();
+
+    path.push("compile.sh");
+    let output = Command::new(&path)
+        .output()
+        .await.map_err(|e| format!("ajfsdkljakdf {}", e))?;
+    path.pop();
+
+    println!("{}", String::from_utf8_lossy(&output.stdout));
+
+    if !output.status.success() {
+        return Ok(format!("Failed to compile!\n{}", String::from_utf8_lossy(&output.stdout)));
+    }
+
+    path.push("run.sh");
+    let output = Command::new(&path)
+        .output()
+        .await.map_err(|e| format!("{}", e))?;
+
+    return Ok(format!("{}", String::from_utf8_lossy(&output.stdout)));
 }
 
 #[tokio::main]
 async fn main() {
+    dotenv::dotenv();
+
     let url = std::env::var("DATABASE_URL")
         .expect("DATABASE_URL should be set");
     let manager = Manager::new(url, Runtime::Tokio1);
     let pool = Pool::builder(manager).build().unwrap();
 
-    let path = Path::new("/var/www/hive");
-    std::fs::create_dir_all(path).expect("unable to create /var/www/hive");
-    std::env::set_current_dir(path).unwrap("unable to move to /var/www/hive");
-
     let app = Router::new()
-        .route("/:id", get(home))
-        .route("/:id/:pr", get(submit))
-        .route("/:id/:pr", post(accept))
+        .route("/",    get(home))
+        .route("/:pr", post(accept))
         .with_state(pool);
 
-    Server::bind("127.0.0.1:5000".parse().unwrap())
-        .serve(app.into_make_serivce())
+    Server::bind(&"127.0.0.1:5000".parse().unwrap())
+        .serve(app.into_make_service())
         .await
         .unwrap();
 }

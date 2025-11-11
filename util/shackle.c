@@ -114,11 +114,43 @@ main(int argc, char **argv)
 	if (nftw("/proc/self/fd", proccb, FOPEN_MAX, 0))
 		die("shackle: unable to close open file descriptors: ");
 
+	int pin[2], pout[2];
+	if (pipe(pin) == -1)
+		die("shackle: unable to create pipe: ");
+	if (pipe(pout) == -1)
+		die("shackle: unable to create pipe: ");
+
 	/* fork and wait child */
 	pid_t child;
 	if ((child = fork()) != 0) {
+		/* TODO: block SIGPIPE */
+
 		if (child == -1)
 			die("shackle: failed to fork process: ");
+
+		int input = pin[1];
+		int output = pout[0];
+
+		if (close(pin[0]) == -1)
+			die("shackle: unable to close file descriptor: ");
+		if (close(pout[1]) == -1)
+			die("shackle: unable to close file descriptor: ");
+
+		int flags;
+		if ((flags = fcntl(input, F_GETFL)) == -1)
+			die("shackle: unable to get pipe flags: ");
+		flags |= O_NONBLOCK;
+		if (fcntl(input, F_SETFL, flags) == -1)
+			die("shackle: unable to set pipe flags: ");
+		if ((flags = fcntl(output, F_GETFL)) == -1)
+			die("shackle: unable to get pipe flags: ");
+		flags |= O_NONBLOCK;
+		if (fcntl(output, F_SETFL, flags) == -1)
+			die("shackle: unable to set pipe flags: ");
+
+
+
+
 
 		sigset_t set;
 		sigemptyset(&set);
@@ -132,8 +164,8 @@ main(int argc, char **argv)
 			die("shackle: failed to wait for child process exit: ");
 
 		/* kill the child process */
-		kill(child, SIGKILL); 
-		if (waitpid(child, NULL, 0))
+		kill(child, SIGKILL);
+		if (waitpid(child, NULL, 0) == -1)
 			die("shackle: unable to wait child process: ");
 
 		/* remove temporary folder and contents */

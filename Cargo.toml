@@ -4,7 +4,11 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-axum = {version = "0.6.20", features = ["headers"]}
+axum = {version = "0.6.20", features = ["headers", "multipart"]}
 deadpool-diesel = { version = "0.6.1", features = ["sqlite"] }
 diesel = { version = "2.2.0", features = ["sqlite", "returning_clauses_for_sqlite_3_35"] }
+dotenv = "0.15.0"
+flate2 = "1.1.5"
+tar = "0.4.44"
+tempfile = "3.23.0"
 tokio = { version = "1.0", features = ["full"] }
