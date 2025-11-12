@@ -16,7 +16,10 @@
 #include <sys/prctl.h>
 #include <sys/resource.h>
 #include <sys/wait.h>
+#include <time.h>
 #include <unistd.h>
+
+volatile sig_atomic_t good = 1;
 
 static void
 die(const char *fmt, ...)
@@ -123,10 +126,22 @@ main(int argc, char **argv)
 	/* fork and wait child */
 	pid_t child;
 	if ((child = fork()) != 0) {
-		/* TODO: block SIGPIPE */
-
 		if (child == -1)
 			die("shackle: failed to fork process: ");
+
+		/* drop root privileges */
+		if (initgroups("hive", pw->pw_gid))
+			die("shackle: unable to init groups: ");
+		if (setgid(pw->pw_gid))
+			die("shackle: unable to set group id: ");
+		if (setuid(pw->pw_uid))
+			die("shackle: unable to set user id: ");
+
+		/* set timer */
+		struct sigaction act;
+		act.sa_handler = SIG_IGN;
+		if (sigaction(SIGCHLD, &act, NULL) == -1)
+			die("shackle: unable to disable SIGCHLD signal: ");
 
 		int input = pin[1];
 		int output = pout[0];
@@ -148,23 +163,53 @@ main(int argc, char **argv)
 		if (fcntl(output, F_SETFL, flags) == -1)
 			die("shackle: unable to set pipe flags: ");
 
-
-
-
-
-		sigset_t set;
-		sigemptyset(&set);
-		sigaddset(&set, SIGCHLD);
+		ssize_t iread = 0, oread = 0;
+		char ibuf[4096], obuf[4096];
 		siginfo_t info;
-		struct timespec timeout = { .tv_sec = 5 };
+		while (good) {
+			for (;;) {
+				if (iread == 0)
+					if ((iread = read(STDIN_FILENO, ibuf, sizeof(ibuf))) <= 0) {
+						if (iread == -1 && errno != EINTR)
+							die("shackle: unable to read from stdin: ");
+						break;
+					}
 
-		sigprocmask(SIG_BLOCK, &set, NULL);
-		int result = sigtimedwait(&set, &info, &timeout);
-		if (result == -1 && errno != EAGAIN)
-			die("shackle: failed to wait for child process exit: ");
+				do {
+					ssize_t iwrite = write(input,
+							ibuf + sizeof(ibuf) - iread, iread);
+					if (iwrite >= 0)
+						iread -= iwrite;
+					else if (errno == EAGAIN)
+						goto br; /* double break */
+					else if (errno != EINTR)
+						die("shackle: unable to write to pipe: ");
+				} while (iread > 0);
+			}
+
+br:
+			while ((oread = read(output, obuf, sizeof(obuf))) > 0) {
+				do {
+					ssize_t owrite = write(STDOUT_FILENO,
+							obuf + sizeof(obuf) - oread, oread);
+					if (owrite >= 0)
+						oread -= owrite;
+					else if (errno != EINTR)
+						die("shackle: unable to write to stdout: ");
+				} while (oread > 0);
+			}
+			if (oread == -1 && (errno != EINTR && errno != EAGAIN))
+				die("shackle: unable to read from pipe: ");
+
+			if (waitid(P_PID, child, &info, WEXITED | WNOHANG) == -1)
+				die("shackle: unable to wait child process: ");
+			if (info.si_pid != 0)
+				break;
+		}
 
 		/* kill the child process */
-		kill(child, SIGKILL);
+		if (good)
+			kill(child, SIGKILL);
 		if (waitpid(child, NULL, 0) == -1)
 			die("shackle: unable to wait child process: ");
 
@@ -172,8 +217,24 @@ main(int argc, char **argv)
 		if (nftw(folder, tempcb, FOPEN_MAX, FTW_DEPTH | FTW_MOUNT | FTW_PHYS))
 			die("shackle: unable to remove temporary folder and contents: ");
 
+		timer_delete(timer);
+
 		return info.si_status;
 	}
+
+	if (close(pin[1]) == -1)
+		die("shackle: unable to close file descriptor: ");
+	if (close(pout[0]) == -1)
+		die("shackle: unable to close file descriptor: ");
+	if (close(STDIN_FILENO) == -1)
+		die("shackle: unable to close stdin: ");
+	if (close(STDOUT_FILENO) == -1)
+		die("shackle: unable to close stdout: ");
+
+	if (dup(pin[0]) != STDIN_FILENO)
+		die("shackle: unable to replace stdin: ");
+	if (dup(pout[1]) != STDOUT_FILENO)
+		die("shackle: unable to replace stdout: ");
 
 	/* enter chroot jail TODO */
 	if (chdir(folder))
