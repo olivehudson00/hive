@@ -130,7 +130,10 @@ main(int argc, char **argv)
 			die("shackle: unable to set user id: ");
 
 		/* kill the child process after a timeout */
-		if (sigtimedwait(&set, NULL, &(struct timespec){ .tv_sec = 5 }) == -1)
+		char *tenv = getenv("SHACKLE_TIMEOUT");
+		int timeout = tenv == NULL ? 1 : strtoul(tenv, NULL, 10);
+		if (sigtimedwait(&set, NULL, &(struct timespec)
+				{ .tv_sec = timeout == 0 ? 1 : timeout }) == -1)
 			kill(child, SIGKILL);
 		siginfo_t info;
 		if (waitid(P_PID, child, &info, WEXITED) == -1)

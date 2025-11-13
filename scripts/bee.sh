@@ -20,38 +20,21 @@ case "$1" in
 		tar -czvf "$2/test.tar.gz" "$2/*"
 		;;
 	add-test)
-		LAST="$(grep "^echo 'Test #[0-9]*: .*$" <"$2/compile.sh" | sed '$q;d' | tr -cd '[0-9]')"
-		NEXT="$((LAST + 1))"
-
 		echo -n 'bee: enter test name: '
 		read -r NAME
-		echo "echo 'Test #$NEXT: $NAME" >>"$2/run.sh"
-		echo "RESULT='Passed'" >>"$2/run.sh"
-		echo >>"$2/run.sh"
+		echo -n 'bee: enter test case input: '
+		read -r INPUT
+		echo -n 'bee: enter test case arguments: '
+		read -r ARGUMENTS
+		echo -n 'bee: enter test case expected output: '
+		read -r EXPECTED
 
-		while true ; do
-			echo -n 'bee: enter test case input (enter to escape): '
-			read -r INPUT
+		ARGUMENTS="${ARGUMENTS:+ $ARGUMENTS}"
 
-			if [ -n "$INPUT" ] ; then
-				break
-			fi
-
-			echo -n 'bee: enter test case arguments: '
-			read -r ARGUMENTS
-			echo -n 'bee: enter test case displayed input: '
-			read -r DISPLAYED
-			echo -n 'bee: enter test case expected output: '
-			read -r EXPECTED
-
-			echo "OUTPUT=\"$$(echo '$INPUT' | shackle ./program $ARGUMENTS)\"" >>"$2/run.sh"
-			echo "echo 'Provided: $DISPLAYED'" >>"$2/run.sh"
-			echo "echo 'Received: \"$$OUTPUT\"" >>"$2/run.sh"
-			echo "[ \"$$OUTPUT\" != \"$EXPECTED\" ] && RESULT='Failed'" >>"$2/run.sh"
-			echo >>"$2/run.sh"
-		done
-
-		echo 'echo "Test $RESULT"'>>"$2/run.sh"
+		echo "echo '$NAME'" >>"$2/run.sh"
+		echo "echo '$INPUT'" >>"$2/run.sh"
+		echo "echo \"\$(echo '$INPUT' | shackle ./program $ARGUMENTS)\"" >>"$2/run.sh"
+		echo "echo '$EXPECTED'" >>"$2/run.sh"
 		echo >>"$2/run.sh"
 		;;
 	*)
