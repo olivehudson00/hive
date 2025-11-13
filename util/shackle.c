@@ -19,8 +19,6 @@
 #include <time.h>
 #include <unistd.h>
 
-volatile sig_atomic_t good = 1;
-
 static void
 die(const char *fmt, ...)
 {
@@ -59,7 +57,7 @@ main(int argc, char **argv)
 	if (argc < 2)
 		die("usage: shackle [program] [args...]");
 
-	/* get passwd file entry before */
+	/* get passwd file entry to later drop privileges */
 	struct passwd *pw;
 	if ((pw = getpwnam("hive")) == NULL)
 		die("shackle: unable to get password file entry: ");
@@ -82,18 +80,12 @@ main(int argc, char **argv)
 	ssize_t nread;
 	char buf[4096];
 	while ((nread = read(from, buf, sizeof(buf))) > 0) {
-		char *out = buf;
-		ssize_t nwrite;
-
 		do {
-			nwrite = write(to, out, nread);
-
-			if (nwrite >= 0) {
+			ssize_t nwrite;
+			if ((nwrite = write(to, buf + sizeof(buf) - nread, nread)) >= 0)
 				nread -= nwrite;
-				out += nwrite;
-			} else if (errno != EINTR) {
+			else if (errno != EINTR)
 				die("shackle: unable to write to file: ");
-			}
 		} while (nread > 0);
 	}
 	if (nread != 0)
@@ -117,11 +109,11 @@ main(int argc, char **argv)
 	if (nftw("/proc/self/fd", proccb, FOPEN_MAX, 0))
 		die("shackle: unable to close open file descriptors: ");
 
-	int pin[2], pout[2];
-	if (pipe(pin) == -1)
-		die("shackle: unable to create pipe: ");
-	if (pipe(pout) == -1)
-		die("shackle: unable to create pipe: ");
+	/* prepare to set timer */
+	sigset_t set;
+	sigemptyset(&set);
+	sigaddset(&set, SIGCHLD);
+	sigprocmask(SIG_BLOCK, &set, NULL);
 
 	/* fork and wait child */
 	pid_t child;
@@ -137,111 +129,24 @@ main(int argc, char **argv)
 		if (setuid(pw->pw_uid))
 			die("shackle: unable to set user id: ");
 
-		/* set timer */
-		struct sigaction act;
-		act.sa_handler = SIG_IGN;
-		if (sigaction(SIGCHLD, &act, NULL) == -1)
-			die("shackle: unable to disable SIGCHLD signal: ");
-
-		int input = pin[1];
-		int output = pout[0];
-
-		if (close(pin[0]) == -1)
-			die("shackle: unable to close file descriptor: ");
-		if (close(pout[1]) == -1)
-			die("shackle: unable to close file descriptor: ");
-
-		int flags;
-		if ((flags = fcntl(input, F_GETFL)) == -1)
-			die("shackle: unable to get pipe flags: ");
-		flags |= O_NONBLOCK;
-		if (fcntl(input, F_SETFL, flags) == -1)
-			die("shackle: unable to set pipe flags: ");
-		if ((flags = fcntl(output, F_GETFL)) == -1)
-			die("shackle: unable to get pipe flags: ");
-		flags |= O_NONBLOCK;
-		if (fcntl(output, F_SETFL, flags) == -1)
-			die("shackle: unable to set pipe flags: ");
-
-		ssize_t iread = 0, oread = 0;
-		char ibuf[4096], obuf[4096];
-		siginfo_t info;
-		while (good) {
-			for (;;) {
-				if (iread == 0)
-					if ((iread = read(STDIN_FILENO, ibuf, sizeof(ibuf))) <= 0) {
-						if (iread == -1 && errno != EINTR)
-							die("shackle: unable to read from stdin: ");
-						break;
-					}
-
-				do {
-					ssize_t iwrite = write(input,
-							ibuf + sizeof(ibuf) - iread, iread);
-					if (iwrite >= 0)
-						iread -= iwrite;
-					else if (errno == EAGAIN)
-						goto br; /* double break */
-					else if (errno != EINTR)
-						die("shackle: unable to write to pipe: ");
-				} while (iread > 0);
-			}
-
-br:
-			while ((oread = read(output, obuf, sizeof(obuf))) > 0) {
-				do {
-					ssize_t owrite = write(STDOUT_FILENO,
-							obuf + sizeof(obuf) - oread, oread);
-					if (owrite >= 0)
-						oread -= owrite;
-					else if (errno != EINTR)
-						die("shackle: unable to write to stdout: ");
-				} while (oread > 0);
-			}
-			if (oread == -1 && (errno != EINTR && errno != EAGAIN))
-				die("shackle: unable to read from pipe: ");
-
-			if (waitid(P_PID, child, &info, WEXITED | WNOHANG) == -1)
-				die("shackle: unable to wait child process: ");
-			if (info.si_pid != 0)
-				break;
-		}
-
-		/* kill the child process */
-		if (good)
+		/* kill the child process after a timeout */
+		if (sigtimedwait(&set, NULL, &(struct timespec){ .tv_sec = 5 }) == -1)
 			kill(child, SIGKILL);
-		if (waitpid(child, NULL, 0) == -1)
+		siginfo_t info;
+		if (waitid(P_PID, child, &info, WEXITED) == -1)
 			die("shackle: unable to wait child process: ");
 
 		/* remove temporary folder and contents */
 		if (nftw(folder, tempcb, FOPEN_MAX, FTW_DEPTH | FTW_MOUNT | FTW_PHYS))
 			die("shackle: unable to remove temporary folder and contents: ");
 
-		timer_delete(timer);
-
 		return info.si_status;
 	}
 
-	if (close(pin[1]) == -1)
-		die("shackle: unable to close file descriptor: ");
-	if (close(pout[0]) == -1)
-		die("shackle: unable to close file descriptor: ");
-	if (close(STDIN_FILENO) == -1)
-		die("shackle: unable to close stdin: ");
-	if (close(STDOUT_FILENO) == -1)
-		die("shackle: unable to close stdout: ");
-
-	if (dup(pin[0]) != STDIN_FILENO)
-		die("shackle: unable to replace stdin: ");
-	if (dup(pout[1]) != STDOUT_FILENO)
-		die("shackle: unable to replace stdout: ");
-
-	/* enter chroot jail TODO */
-	if (chdir(folder))
-		die("shackle: unable to chdir into chroot directory: ");
-	if (chroot("."))
+	/* enter chroot jail */
+	if (chroot(folder))
 		die("shackle: unable to chroot: ");
-	if (chdir("."))
+	if (chdir("/"))
 		die("shackle: unable to chdir into chroot directory: ");
 
 	/* drop root privileges */
@@ -253,8 +158,8 @@ br:
 		die("shackle: unable to set user id: ");
 
 	/* restrict available memory and number of child processes */
-	struct rlimit mem = { .rlim_cur = 1024 * 1024 * 2,
-			.rlim_max = 1024 * 1024 * 2 };
+	struct rlimit mem = { .rlim_cur = 1024 * 1024 * 64,
+			.rlim_max = 1024 * 1024 * 64 };
 	if (setrlimit(RLIMIT_AS, &mem))
 		die("shackle: unable to restrict memory rlimit: ");
 	struct rlimit proc = { .rlim_cur = 0, .rlim_max = 0 };
@@ -285,6 +190,14 @@ br:
 		die("shackle: unable to add seccomp rule");
 
 	if (seccomp_rule_add(ctx, SCMP_ACT_ALLOW, SCMP_SYS(mprotect), 0))
+		die("shackle: unable to add seccomp rule");
+	if (seccomp_rule_add(ctx, SCMP_ACT_ALLOW, SCMP_SYS(futex), 0))
+		die("shackle: unable to add seccomp rule");
+	if (seccomp_rule_add(ctx, SCMP_ACT_ALLOW, SCMP_SYS(mmap), 0))
+		die("shackle: unable to add seccomp rule");
+	if (seccomp_rule_add(ctx, SCMP_ACT_ALLOW, SCMP_SYS(lseek), 0))
+		die("shackle: unable to add seccomp rule");
+	if (seccomp_rule_add(ctx, SCMP_ACT_ALLOW, SCMP_SYS(fstat), 0))
 		die("shackle: unable to add seccomp rule");
 	if (seccomp_rule_add(ctx, SCMP_ACT_ALLOW, SCMP_SYS(readlinkat), 0))
 		die("shackle: unable to add seccomp rule");
