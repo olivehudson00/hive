@@ -4,7 +4,7 @@
 # see LICENCE file for licensing information
 
 if [ "$#" -lt 2 ] ; then
-	echo 'bee: missing command and directory' >&2
+	echo 'usage: bee [command] [directory]' >&2
 	exit 1
 fi
 

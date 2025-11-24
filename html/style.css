@@ -1,0 +1,72 @@
+:root {
+	--font: #ffffff;
+	--dark: #1A190F;
+}
+
+html {	
+	color: var(--font);
+	font-family: "Hack", "Hack Nerd Font", "JetBrains Mono", "JetBrainsMono Nerd Font", monospace, sans-serif;
+
+	background: var(--dark) url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" height="2em" viewBox="0 0 3 1.7320508076"><path d="M0 0.8660254038h1L1.5 0h1L3 0.8660254038L2.5 1.7320508076h-1L1 0.8660254038" stroke="%23AF8CCF30" stroke-width="0.05" fill="none"/></svg>');
+	background-position: 1.25em 0.75em;
+}
+
+.p {
+	color: green;
+
+	&::before {
+		content: "[PASS] ";
+	}
+}
+
+.f {
+	color: red;
+
+	&::before {
+		content: "[FAIL] ";
+	}
+}
+
+html, body {
+	margin: 0;
+	padding: 0;
+	overflow-x: hidden;
+}
+
+main {
+	max-width: 800px;
+	margin: 1em auto;
+}
+
+fieldset {
+	border-color: var(--font);
+	border-radius: 4px;
+	background-color: var(--dark);
+	border-width: 2px;
+
+	margin-bottom: 1em;
+}
+
+legend {
+	margin-left: 1em;
+}
+
+a {
+	color: #AF8CCF;
+	text-decoration: none;
+}
+
+div {
+	display: flex;
+	& > span {
+		flex-grow: 1;
+		border-bottom: dotted 3px var(--font);
+		margin: 0 0.75em;
+		translate: 0 -0.5em;
+	}
+
+	& > p {
+		margin: 0;
+		padding: 0;
+	}
+}

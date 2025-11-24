@@ -2,6 +2,7 @@
  * Copyright (C) 2025 Olive Hudson
  * see LICENCE file for licensing information */
 
+pub mod output;
 pub mod models;
 pub mod schema;
 
@@ -27,6 +28,7 @@ use tokio::process::Command;
 
 use crate::models::*;
 use crate::schema::*;
+use crate::output;
 
 fn date(timestamp: u64) -> String {
     return format!("{}", timestamp);
@@ -58,7 +60,7 @@ async fn accept(
     State(pool): State<Pool>,
     AxumPath(projectid): AxumPath<i32>,
     mut form: Multipart,
-) -> Result<String, String> {
+) -> Result<Html<String>, String> {
     let conn = pool.get().await.map_err(|e| format!("{}", e))?;
 
     let project = conn.interact(move |conn| {
@@ -107,7 +109,7 @@ async fn accept(
         .output()
         .await.map_err(|e| format!("{}", e))?;
 
-    return Ok(format!("{}", String::from_utf8_lossy(&output.stdout)));
+    return Ok(axum::response::Html(output::fmt(String::from_utf8_lossy(&output.stdout))));
 }
 
 #[tokio::main]
@@ -120,8 +122,9 @@ async fn main() {
     let pool = Pool::builder(manager).build().unwrap();
 
     let app = Router::new()
-        .route("/",    get(home))
-        .route("/:pr", post(accept))
+        .route("/", get(get_programs))
+        .route("/:pr", get(get_project))
+        .route("/:pr", post(post_submit))
         .with_state(pool);
 
     Server::bind(&"127.0.0.1:5000".parse().unwrap())

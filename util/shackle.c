@@ -169,7 +169,7 @@ main(int argc, char **argv)
 	if (setrlimit(RLIMIT_NPROC, &proc))
 		die("shackle: unable to restrict child processes rlimit: ");
 
-	/* create seccomp filter and only allow read, write, _exit, sigreturn,
+	/* create seccomp filter and only allow read, write, exit, sigreturn,
 	 * execve, and brk syscalls, as well as others needed for program
 	 * instantiation */
 	if (prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) == -1)
