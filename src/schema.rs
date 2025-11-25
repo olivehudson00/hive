@@ -1,9 +1,53 @@
 // @generated automatically by Diesel CLI.
 
 diesel::table! {
-    projects (id) {
+    enrolments (id) {
         id -> Integer,
-        name -> Text,
-        test -> Binary,
+        user -> Integer,
+        program -> Integer,
     }
 }
+
+diesel::table! {
+    programs (id) {
+        id -> Integer,
+        name -> Text,
+    }
+}
+
+diesel::table! {
+    projects (id) {
+        id -> Integer,
+        program -> Integer,
+        name -> Text,
+        test -> Binary,
+        grade -> Integer,
+    }
+}
+
+diesel::table! {
+    submissions (id) {
+        id -> Integer,
+        user -> Integer,
+        project -> Integer,
+        time -> BigInt,
+        results -> Nullable<Text>,
+        grade -> Nullable<Integer>,
+    }
+}
+
+diesel::table! {
+    users (id) {
+        id -> Integer,
+        name -> Text,
+        cookie -> Nullable<Text>,
+        expiry -> Nullable<BigInt>,
+    }
+}
+
+diesel::joinable!(enrolments -> users (user));
+diesel::joinable!(projects -> programs (program));
+diesel::joinable!(submissions -> projects (project));
+diesel::joinable!(submissions -> users (user));
+
+diesel::allow_tables_to_appear_in_same_query!(enrolments, programs, projects, submissions, users,);

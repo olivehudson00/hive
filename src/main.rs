@@ -112,6 +112,26 @@ async fn accept(
     return Ok(axum::response::Html(output::fmt(String::from_utf8_lossy(&output.stdout))));
 }
 
+/*
+#[derive(Serialize, Deserialize)]
+struct Claims {
+    sub: String,
+    id: i32,
+    exp: usize,
+}
+
+async fn authenticate(
+    State(pool): State<Pool>,
+    mut request: Request,
+    next: Next,
+) -> impl IntoResponse {
+    let mut jar = CookieJar::from_headers(request.headers());
+    if let Some(jwt) = jar.get("jwt") {
+        match validate_jwt::<Claims>(
+    }
+}
+*/
+
 #[tokio::main]
 async fn main() {
     dotenv::dotenv();
@@ -122,7 +142,7 @@ async fn main() {
     let pool = Pool::builder(manager).build().unwrap();
 
     let app = Router::new()
-        .route("/", get(get_programs))
+        .route("/", get(get_program))
         .route("/:pr", get(get_project))
         .route("/:pr", post(post_submit))
         .with_state(pool);
