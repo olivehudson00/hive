@@ -40,5 +40,5 @@ pub async fn auth_redirect(
     State(pool): State<pool>,
     Form(form): Form<AuthForm>,
 ) -> impl IntoResponse {
-
+    
 }

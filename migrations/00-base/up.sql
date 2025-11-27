@@ -35,7 +35,7 @@ CREATE TABLE submissions (
     id      INTEGER NOT NULL PRIMARY KEY,
     user    INTEGER NOT NULL,
     project INTEGER NOT NULL,
-	time    BIGINT  NOT NULL,
+	time    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     results VARCHAR,
 	grade   INTEGER,
 

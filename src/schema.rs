@@ -30,7 +30,7 @@ diesel::table! {
         id -> Integer,
         user -> Integer,
         project -> Integer,
-        time -> BigInt,
+        time -> Timestamp,
         results -> Nullable<Text>,
         grade -> Nullable<Integer>,
     }
@@ -40,8 +40,7 @@ diesel::table! {
     users (id) {
         id -> Integer,
         name -> Text,
-        cookie -> Nullable<Text>,
-        expiry -> Nullable<BigInt>,
+        nonce -> Nullable<Text>,
     }
 }
 

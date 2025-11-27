@@ -58,7 +58,7 @@ pub struct Submission {
     id: i32,
     user: i32,
     project: i32,
-    time: u64,
+    time: chrono::NaiveDateTime,
     results: Option<String>,
     grade: Option<i32>,
 }

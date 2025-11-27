@@ -44,7 +44,7 @@ fieldset {
 	background-color: var(--dark);
 	border-width: 2px;
 
-	margin-bottom: 1em;
+	margin: 0 1em 1em 1em;
 }
 
 legend {
