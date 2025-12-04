@@ -2,127 +2,185 @@
  * Copyright (C) 2025 Olive Hudson
  * see LICENCE file for licensing information */
 
-fn e500<E>(err: E) -> impl IntoResponse
+use std::fmt::Write as FmtWrite;
+use std::fs::File;
+use std::io::Write as IoWrite;
+use std::path::PathBuf;
+
+use axum::{
+    Extension,
+    extract::{Multipart, Path as AxumPath, State},
+    http::StatusCode,
+    response::{Html, Redirect},
+};
+use deadpool_diesel::sqlite::Pool;
+use diesel::{
+    insert_into,
+    prelude::*,
+};
+use flate2::read::GzDecoder;
+use tar::Archive;
+use tempfile::TempDir;
+use tokio::process::Command;
+
+use crate::models::*;
+use crate::schema;
+
+fn e404<E>(err: E) -> (StatusCode, String)
 where
     E: std::error::Error,
 {
-    Err((StatusCode::INTERNAL_SERVER_ERROR, err.to_string()))
+    (StatusCode::NOT_FOUND, err.to_string())
+}
+
+fn e500<E>(err: E) -> (StatusCode, String)
+where
+    E: std::error::Error,
+{
+    (StatusCode::INTERNAL_SERVER_ERROR, err.to_string())
 }
 
 pub async fn get_program(
     State(pool): State<Pool>,
-    Extension(userid): Extension<i32>,
-) -> impl IntoResponse {
-    let conn = pool.get().await.map_err(e500);
+    Extension(user_id): Extension<i32>,
+) -> Result<Html<String>, (StatusCode, String)> {
+    let conn = pool.get().await.map_err(e500)?;
 
-    let programs = conn.interact(|conn| {
-        schema::enrolments::table
-            .filter(schema::enrolments::user.eq(userid))
-            .inner_join(programs::table)
+    let programs = conn.interact(move |conn| {
+        schema::programs::table
+            .inner_join(schema::enrolments::table.on(schema::enrolments::program_id.eq(schema::programs::id)))
+            .filter(schema::enrolments::user_id.eq(user_id))
             .select(Program::as_select())
             .load(conn)
     }).await.map_err(e500)?.map_err(e500)?;
-    let projects = conn.interact(|conn| {
-        ProjectSelect::belonging_to(&programs)
-            .select(ProjectSelect::as_select())
-            .load(conn)
-            .grouped_by(&programs)
-    }).await.map_err(e500)?.map_err(e500)?;
-    let submissions = conn.interact(|conn| {
-        SubmissionSelect::belonging_to(&projects)
-            .filter(schema::submission::user.eq(userid))
-            .select(SubmissionSelect::as_select())
-            .load(conn)
-            .grouped_by(&projects)
-    }).await.map_err(e500)?.map_err(e500)?;
+// "SELECT p.id, p.program_id, p.name, p.grade, s.grade\n",
+// "FROM projects AS p\n",
+// "LEFT JOIN (\n",
+// "    SELECT s.project_id, s.user_id, MAX(s.grade)\n"
+// "    FROM submission AS s\n",
+// "    GROUP BY s.project_id, s.user_id\n",
+// ") AS s\n",
+// "ON p.id = s.project_id AND s.user_id = ?\n",
+// "WHERE p.program_id IN ?"
+    let projects = conn.interact(move |conn| {
+        schema::projects::table
+            .left_join(
+                schema::submissions::table
+                    .group_by((
+                        schema::submissions::project_id,
+                        schema::submissions::user_id,
+                    ))
+                    .select((
+                        schema::submissions::project_id,
+                        schema::submissions::user_id,
+                        diesel::dsl::max(schema::submissions::grade),
+                    ))
+                    .single_value()
+                    .on(
+                        schema::projects::id.eq(schema::submissions::project_id)
+                            .and(schema::submissions::user_id.eq(user_id))
+                    )
+            )
+            .select((
+                Project::as_select(),
+                diesel::dsl::max(schema::submissions::grade),
+            ))
+            .belonging_to(&programs)
+            .load::<(Project, Option<i32>)>(conn)
+    }).await.map_err(e500)?.map_err(e500)?.grouped_by(&programs);
 
-    let projects = projects
-        .into_iter()
-        .zip(submissions)
-        .collect::<Vec<(ProjectSelect, Vec<SubmissionSelect>)>>;
-    let programs = programs
+    let programs: Vec<(Program, Vec<(Project, Option<i32>)>)> = programs
         .into_iter()
         .zip(projects)
-        .collect::<Vec<(Program, Vec<(ProjectSelect, Vec<SubmissionSelect>)>)>>;
+        .collect();
 
-    let string = String::new();
+    let mut string = String::new();
     write!(string, include_str!("head.html"), "Programs");
     for (program, projects) in programs {
         write!(string, "<fieldset>\n");
         write!(string, "<legend>{}</legend>\n", program.name);
-        for (project, submissions) in projects {
+        for (project, sub_grades) in projects {
             write!(string, "<div>\n");
             write!(string, "<a href='/{}'>{}</a>\n", project.id, project.name);
             write!(string, "<span></span>\n");
-            write!(string, "<span>{}/{}</span>\n", submissions.iter().max_by_key(|e| if e.grade.is_some() { e.grade } else { 0 }).unwrap_or(0), project.grade);
+            write!(
+                string,
+                "<span>{}/{}</span>\n",
+                sub_grades
+                    .iter()
+                    .map(|g| g.grade.unwrap_or(0))
+                    .max()
+                    .unwrap_or(0),
+                project.grade
+            );
             write!(string, "</div>\n");
         }
         write!(string, "</fieldset>\n");
     }
     write!(string, include_str!("foot.html"));
-    Ok(string)
+    Ok(Html(string))
 }
 
 pub async fn get_project(
     State(pool): State<Pool>,
-    Extension(userid): Extension<i32>,
-    AxumPath(projectid): AxumPath<i32>,
-) -> impl IntoResponse {
-    let conn = pool.get().await.map_err(e500);
+    Extension(user_id): Extension<i32>,
+    AxumPath(project_id): AxumPath<i32>,
+) -> Result<Html<String>, (StatusCode, String)> {
+    let conn = pool.get().await.map_err(e500)?;
 
-    let project = conn.interact(|conn| {
+    let (project_name, project_grade) = conn.interact(move |conn| {
         schema::projects::table
-            .filter(schema::projects::id.eq(projectid))
-            .select(ProjectSelect::as_select())
-            .load(conn)
+            .filter(schema::projects::id.eq(project_id))
+            .select((
+                schema::projects::name,
+                schema::projects::grade,
+            ))
+            .first::<(String, i32)>(conn)
     }).await.map_err(e500)?.map_err(e500)?;
-    let submissions = conn.interact(|conn| {
-        Submission::belonging_to(&project)
-            .filter(schema::submission::user.eq(userid))
+    let subs = conn.interact(move |conn| {
+        schema::submissions::table
+            .filter(schema::submissions::user_id.eq(user_id))
+            .filter(schema::submissions::project_id.eq(project_id))
             .select(Submission::as_select())
             .load(conn)
     }).await.map_err(e500)?.map_err(e500)?;
 
-    let string = String::new();
-    write!(string, include_str!("head.html"), project.name);
-    for submission in submissions {
+    let mut string = String::new();
+    write!(string, include_str!("head.html"), project_name);
+    for sub in subs {
         write!(string, "<fieldset>\n");
-        if (Some(results), Some(grade)) = (submission.results, submission.grade) {
-            write!(string, "<legend>{}——{}/{}</legend>\n", project.name, grade, project.grade);
+        if let (Some(results), Some(grade)) = (sub.results, sub.grade) {
+            write!(string, "<legend>{}——{}/{}</legend>\n", project_name, grade, project_grade);
             write!(string, "{}", results);
         } else {
-            write!(string, "<legend>{}——0/{}</legend>\n", project.name, project.grade);
+            write!(string, "<legend>{}——0/{}</legend>\n", project_name, project_grade);
             write!(string, "<p>Awaiting Testing...</p>");
         }
         write!(string, "</fieldset>\n");
     }
     write!(string, include_str!("foot.html"));
-    Ok(string)
+    Ok(Html(string))
 }
 
 pub async fn post_project(
     State(pool): State<Pool>,
-    Extension(userid): Extension<i32>,
-    AxumPath(projectid): AxumPath<i32>,
+    Extension(user_id): Extension<i32>,
+    AxumPath(project_id): AxumPath<i32>,
     mut form: Multipart,
-) -> impl IntoResponse {
-    let conn = pool.get.await.map_err(e500)?;
+) -> Result<Redirect, (StatusCode, String)> {
+    let conn = pool.get().await.map_err(e500)?;
 
-    let project = conn.interact(|conn| {
+    let project = conn.interact(move |conn| {
         schema::projects::table
-            .filter(schema::projects::id.eq(projectid))
-            .select(Project::as_select())
-            .load(conn)
+            .filter(schema::projects::id.eq(project_id))
+            .select(ProjectWithTest::as_select())
+            .first(conn)
     }).await.map_err(e500)?.map_err(e500)?;
-    if project.len() == 0 {
-        return Err(StatusCode::NOT_FOUND, "no such project");
-    }
-    let project = project[0];
 
     let dir = TempDir::new().map_err(e500)?;
     let mut path = PathBuf::new();
     path.push(dir.path());
-    let tar = GzDecoder::new(&project.test);
+    let tar = GzDecoder::new(&*project.test);
     let mut archive = Archive::new(tar);
     archive.unpack(&path);
 
@@ -132,36 +190,43 @@ pub async fn post_project(
         .next_field()
         .await
         .map_err(e500)?
-        .ok_or((StatusCode::BAD_REQUEST, "no file provided"))?;
+        .ok_or((StatusCode::BAD_REQUEST, "no file provided".to_string()))?;
     file.write_all(&field.bytes().await.map_err(e500)?).map_err(e500)?;
     path.pop();
 
-    let mut sub = conn.interact(|conn| {
+    let mut sub = conn.interact(move |conn| {
         insert_into(schema::submissions::table)
             .values((
-                schema::submissions::user.eq(userid),
-                schema::submissions::project.eq(projectid),
+                schema::submissions::user_id.eq(user_id),
+                schema::submissions::project_id.eq(project_id),
             ))
             .get_result::<Submission>(conn)
-
     }).await.map_err(e500)?.map_err(e500)?;
 
     tokio::spawn(async move {
         path.push("run.sh");
         let output = Command::new(&path)
             .output()
-            .await
-            .map_err(e500)?;
+            .await;
 
-        let (output, grade) = output.rsplit_once('\n');
-        sub.results = Some(output);
-        sub.grade = Some(i32::try_into(grade).unwrap_or(0));
-        conn.interact(|conn| {
+        sub.results = Some(String::new());
+        sub.grade = Some(0);
+        if let Ok(output) = output {
+            if let Some((output, grade)) = str::from_utf8(&output.stdout)
+                .unwrap_or("")
+                .rsplit_once('\n')
+            {
+                sub.results = Some(output.to_string());
+                sub.grade = Some(grade.parse::<i32>().unwrap_or(0));
+            }
+        }
+
+        conn.interact(move |conn| {
             insert_into(schema::submissions::table)
                 .values(&sub)
                 .execute(conn)
-        }).await.map_err(e500)?.map_err(e500)?;
+        }).await;
     });
 
-    Ok(Redirect::to(format!("/{}", projectid)))
+    Ok(Redirect::to(&format!("/{}", project_id)))
 }

@@ -1,7 +1,6 @@
 CREATE TABLE users (
     id      INTEGER NOT NULL PRIMARY KEY,
-    name    VARCHAR NOT NULL,
-	nonce   VARCHAR
+    name    VARCHAR NOT NULL
 );
 
 CREATE TABLE programs (
@@ -10,37 +9,37 @@ CREATE TABLE programs (
 );
 
 CREATE TABLE enrolments (
-	id		INTEGER NOT NULL PRIMARY KEY,
-	user    INTEGER NOT NULL,
-	program INTEGER NOT NULL,
+	id		   INTEGER NOT NULL PRIMARY KEY,
+	user_id    INTEGER NOT NULL,
+	program_id INTEGER NOT NULL,
 
-	FOREIGN KEY (user)
+	FOREIGN KEY (user_id)
 		REFERENCES users (id),
-	FOREIGN KEY (program)
+	FOREIGN KEY (program_id)
 		REFERENCES program (id)
 );
 
 CREATE TABLE projects (
-    id      INTEGER NOT NULL PRIMARY KEY,
-    program INTEGER NOT NULL,
-    name    VARCHAR NOT NULL,
-    test    BLOB    NOT NULL,
-	grade   INTEGER NOT NULL,
+    id         INTEGER NOT NULL PRIMARY KEY,
+    program_id INTEGER NOT NULL,
+    name       VARCHAR NOT NULL,
+    test       BLOB    NOT NULL,
+	grade      INTEGER NOT NULL,
 
-    FOREIGN KEY (program)
+    FOREIGN KEY (program_id)
         REFERENCES programs (id)
 );
 
 CREATE TABLE submissions (
-    id      INTEGER NOT NULL PRIMARY KEY,
-    user    INTEGER NOT NULL,
-    project INTEGER NOT NULL,
-	time    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    results VARCHAR,
-	grade   INTEGER,
+    id         INTEGER NOT NULL PRIMARY KEY,
+    user_id    INTEGER NOT NULL,
+    project_id INTEGER NOT NULL,
+	time       TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    results    VARCHAR,
+	grade      INTEGER,
 
-	FOREIGN KEY (user)
+	FOREIGN KEY (user_id)
 		REFERENCES users (id),
-	FOREIGN KEY (project)
+	FOREIGN KEY (project_id)
 		REFERENCES projects (id)
 );

@@ -3,8 +3,8 @@
 diesel::table! {
     enrolments (id) {
         id -> Integer,
-        user -> Integer,
-        program -> Integer,
+        user_id -> Integer,
+        program_id -> Integer,
     }
 }
 
@@ -18,7 +18,7 @@ diesel::table! {
 diesel::table! {
     projects (id) {
         id -> Integer,
-        program -> Integer,
+        program_id -> Integer,
         name -> Text,
         test -> Binary,
         grade -> Integer,
@@ -28,8 +28,8 @@ diesel::table! {
 diesel::table! {
     submissions (id) {
         id -> Integer,
-        user -> Integer,
-        project -> Integer,
+        user_id -> Integer,
+        project_id -> Integer,
         time -> Timestamp,
         results -> Nullable<Text>,
         grade -> Nullable<Integer>,
@@ -40,13 +40,12 @@ diesel::table! {
     users (id) {
         id -> Integer,
         name -> Text,
-        nonce -> Nullable<Text>,
     }
 }
 
-diesel::joinable!(enrolments -> users (user));
-diesel::joinable!(projects -> programs (program));
-diesel::joinable!(submissions -> projects (project));
-diesel::joinable!(submissions -> users (user));
+diesel::joinable!(enrolments -> users (user_id));
+diesel::joinable!(projects -> programs (program_id));
+diesel::joinable!(submissions -> projects (project_id));
+diesel::joinable!(submissions -> users (user_id));
 
 diesel::allow_tables_to_appear_in_same_query!(enrolments, programs, projects, submissions, users,);

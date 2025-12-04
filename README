@@ -1,0 +1,11 @@
+Hive - Build and Test Server
+============================
+Hive is a web server that accepts and runs user-submitted code through test
+cases defined for certain projects and provides feedback to users on how to
+improve their code.  Hive can be used to enrol students in project courses and
+grade student programs.
+
+
+Writing a Project
+-----------------
+
