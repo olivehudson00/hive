@@ -27,18 +27,21 @@ pub struct Enrolment {
     pub program_id: i32,
 }
 
-#[derive(Identifiable, Queryable, Selectable, Associations)]
-#[diesel(belongs_to(Program))]
-#[diesel(table_name = crate::schema::projects)]
-pub struct Project {
+#[derive(QueryableByName)]
+pub struct ProjectWithoutTest {
+    #[diesel(sql_type = diesel::sql_types::Integer)]
     pub id: i32,
+    #[diesel(sql_type = diesel::sql_types::Integer)]
     pub program_id: i32,
+    #[diesel(sql_type = diesel::sql_types::Varchar)]
     pub name: String,
+    #[diesel(sql_type = diesel::sql_types::Integer)]
     pub grade: i32,
+    #[diesel(sql_type = diesel::sql_types::Integer)]
+    pub grade_max: i32,
 }
 
-#[derive(Identifiable, Queryable, Selectable, Associations, Insertable)]
-#[diesel(belongs_to(Project))]
+#[derive(Identifiable, Queryable, Selectable, Insertable)]
 #[diesel(table_name = crate::schema::submissions)]
 pub struct Submission {
     pub id: i32,

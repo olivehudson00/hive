@@ -2,43 +2,40 @@
  * Copyright (C) 2025 Olive Hudson
  * see LICENCE file for licensing information */
 
-#[derive(Serialize, Deserialize)]
-struct Context {
-    sub: i32,
-    exp: usize,
-}
-
-#[derive(Deserialize)]
-struct AuthForm {
-    id_token: String,
-}
+use axum::{
+    body::Body,
+    extract::Request,
+    http::StatusCode,
+    middleware::Next,
+    response::Response,
+};
+use base64::{
+    engine::general_purpose::URL_SAFE as b64,
+    Engine as _,
+};
 
 pub async fn auth_middleware(
-    State(pool): State<Pool>,
     mut request: Request,
     next: Next,
-) -> impl IntoResponse {
-    let mut jar = CookieJar::from_headers(request.headers());
-    let jwt = jar.get("jwt");
-
-    let mut user = 0;
-    if let Some(jwt) = jwt {
-        if let Ok(claims) = validate_jwt::<Context>(JWT_SIGNING_KEY, jwt.value()) {
-            if claims.exp < SystemTime::now().duration_since(UNIX_EPOCH) {
-                request.extensions_mut().insert(claims.sub);
-                let response = next.run(request).await;
-                return (jar, response).into_response();
+) -> Response {
+    if let Some(auth) = request.headers().get("Authorization") {
+        if let Some((kind, auth)) = String::from_utf8_lossy(auth.as_bytes()).split_once(' ') {
+            if kind == "Basic" {
+                if let Ok(auth) = b64.decode(auth) {
+                    if let Some((user, _)) = String::from_utf8_lossy(&auth).split_once(':') {
+                        if let Ok(id) = user.parse::<i32>() {
+                            request.extensions_mut().insert(id);
+                            return next.run(request).await;
+                        }
+                    }
+                }
             }
         }
     }
 
-    /* redirect to login page */
-    todo!();
-}
-
-pub async fn auth_redirect(
-    State(pool): State<pool>,
-    Form(form): Form<AuthForm>,
-) -> impl IntoResponse {
-    
+    Response::builder()
+        .status(StatusCode::UNAUTHORIZED)
+        .header("WWW-Authenticate", "Basic realm=\"site\"")
+        .body(Body::from(""))
+        .unwrap()
 }

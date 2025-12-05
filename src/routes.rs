@@ -17,6 +17,7 @@ use deadpool_diesel::sqlite::Pool;
 use diesel::{
     insert_into,
     prelude::*,
+    sql_query,
 };
 use flate2::read::GzDecoder;
 use tar::Archive;
@@ -53,68 +54,51 @@ pub async fn get_program(
             .select(Program::as_select())
             .load(conn)
     }).await.map_err(e500)?.map_err(e500)?;
-// "SELECT p.id, p.program_id, p.name, p.grade, s.grade\n",
-// "FROM projects AS p\n",
-// "LEFT JOIN (\n",
-// "    SELECT s.project_id, s.user_id, MAX(s.grade)\n"
-// "    FROM submission AS s\n",
-// "    GROUP BY s.project_id, s.user_id\n",
-// ") AS s\n",
-// "ON p.id = s.project_id AND s.user_id = ?\n",
-// "WHERE p.program_id IN ?"
-    let projects = conn.interact(move |conn| {
-        schema::projects::table
-            .left_join(
-                schema::submissions::table
-                    .group_by((
-                        schema::submissions::project_id,
-                        schema::submissions::user_id,
-                    ))
-                    .select((
-                        schema::submissions::project_id,
-                        schema::submissions::user_id,
-                        diesel::dsl::max(schema::submissions::grade),
-                    ))
-                    .single_value()
-                    .on(
-                        schema::projects::id.eq(schema::submissions::project_id)
-                            .and(schema::submissions::user_id.eq(user_id))
-                    )
-            )
-            .select((
-                Project::as_select(),
-                diesel::dsl::max(schema::submissions::grade),
-            ))
-            .belonging_to(&programs)
-            .load::<(Project, Option<i32>)>(conn)
-    }).await.map_err(e500)?.map_err(e500)?.grouped_by(&programs);
 
-    let programs: Vec<(Program, Vec<(Project, Option<i32>)>)> = programs
-        .into_iter()
-        .zip(projects)
-        .collect();
+    // todo sort by then use chunk_by to group with parents to avoid O(n^2) loops
+    let mut programs_iter = programs.iter();
+    let mut list = format!("{}", programs_iter.next().unwrap().id);
+    for program in programs_iter {
+        write!(list, ", {}", program.id);
+    }
+    let query = format!(
+        concat!(
+            "SELECT p.id, p.program_id, p.name, p.grade, s.grade\n",
+            "FROM projects AS p\n",
+            "LEFT JOIN (\n",
+            "    SELECT s.project_id, s.user_id, MAX(s.grade)\n",
+            "    FROM submission AS s\n",
+            "    GROUP BY s.project_id, s.user_id\n",
+            ") AS s\n",
+            "ON p.id = s.project_id AND s.user_id = {}\n",
+            "WHERE p.program_id IN ({})"
+        ),
+        user_id,
+        list
+    );
+
+    let projects: Vec<ProjectWithoutTest> = conn.interact(move |conn| {
+        sql_query(query).get_results(conn)
+    }).await.map_err(e500)?.map_err(e500)?;
 
     let mut string = String::new();
     write!(string, include_str!("head.html"), "Programs");
-    for (program, projects) in programs {
+    for program in programs {
         write!(string, "<fieldset>\n");
         write!(string, "<legend>{}</legend>\n", program.name);
-        for (project, sub_grades) in projects {
+
+        for project in &projects {
+            if project.program_id != program.id {
+                continue
+            }
+
             write!(string, "<div>\n");
             write!(string, "<a href='/{}'>{}</a>\n", project.id, project.name);
             write!(string, "<span></span>\n");
-            write!(
-                string,
-                "<span>{}/{}</span>\n",
-                sub_grades
-                    .iter()
-                    .map(|g| g.grade.unwrap_or(0))
-                    .max()
-                    .unwrap_or(0),
-                project.grade
-            );
+            write!(string, "<span>{}/{}</span>\n", project.grade, project.grade_max);
             write!(string, "</div>\n");
         }
+
         write!(string, "</fieldset>\n");
     }
     write!(string, include_str!("foot.html"));
