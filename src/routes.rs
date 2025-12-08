@@ -63,11 +63,11 @@ pub async fn get_program(
     }
     let query = format!(
         concat!(
-            "SELECT p.id, p.program_id, p.name, p.grade, s.grade\n",
+            "SELECT p.id, p.program_id, p.name, p.grade, s.sub_grade\n",
             "FROM projects AS p\n",
             "LEFT JOIN (\n",
-            "    SELECT s.project_id, s.user_id, MAX(s.grade)\n",
-            "    FROM submission AS s\n",
+            "    SELECT s.project_id, s.user_id, MAX(s.grade) as sub_grade\n",
+            "    FROM submissions AS s\n",
             "    GROUP BY s.project_id, s.user_id\n",
             ") AS s\n",
             "ON p.id = s.project_id AND s.user_id = {}\n",
@@ -95,7 +95,7 @@ pub async fn get_program(
             write!(string, "<div>\n");
             write!(string, "<a href='/{}'>{}</a>\n", project.id, project.name);
             write!(string, "<span></span>\n");
-            write!(string, "<span>{}/{}</span>\n", project.grade, project.grade_max);
+            write!(string, "<span>{}/{}</span>\n", project.sub_grade.unwrap_or(0), project.grade);
             write!(string, "</div>\n");
         }
 
@@ -131,11 +131,19 @@ pub async fn get_project(
 
     let mut string = String::new();
     write!(string, include_str!("head.html"), project_name);
+    write!(string, "<fieldset>\n");
+    write!(string, "<legend>Submit</legend>\n");
+    write!(string, "<form action='/{}' enctype='multipart/form-data' method='post'>\n", project_id);
+    write!(string, "<input type='file' id='file' name='file'>\n");
+    write!(string, "<input type='submit'>\n");
+    write!(string, "</form>\n");
+    write!(string, "</fieldset>\n");
+
     for sub in subs {
         write!(string, "<fieldset>\n");
-        if let (Some(results), Some(grade)) = (sub.results, sub.grade) {
-            write!(string, "<legend>{}——{}/{}</legend>\n", project_name, grade, project_grade);
-            write!(string, "{}", results);
+        if sub.results.is_some() && sub.grade.is_some() {
+            write!(string, "<legend>{}——{}/{}</legend>\n", project_name, sub.grade.unwrap(), project_grade);
+            write!(string, "{}", sub.results.unwrap());
         } else {
             write!(string, "<legend>{}——0/{}</legend>\n", project_name, project_grade);
             write!(string, "<p>Awaiting Testing...</p>");
@@ -161,9 +169,7 @@ pub async fn post_project(
             .first(conn)
     }).await.map_err(e500)?.map_err(e500)?;
 
-    let dir = TempDir::new().map_err(e500)?;
-    let mut path = PathBuf::new();
-    path.push(dir.path());
+    let mut path = TempDir::new().map_err(e500)?.into_path();
     let tar = GzDecoder::new(&*project.test);
     let mut archive = Archive::new(tar);
     archive.unpack(&path);
@@ -192,12 +198,22 @@ pub async fn post_project(
         let output = Command::new(&path)
             .output()
             .await;
+        path.pop();
+
+        let paths = std::fs::read_dir(&path).unwrap();
+
+        for path in paths {
+            println!("Name: {}", path.unwrap().path().display())
+        }
+
+        std::fs::remove_dir_all(&path);
 
         sub.results = Some(String::new());
         sub.grade = Some(0);
         if let Ok(output) = output {
             if let Some((output, grade)) = str::from_utf8(&output.stdout)
                 .unwrap_or("")
+                .trim()
                 .rsplit_once('\n')
             {
                 sub.results = Some(output.to_string());
@@ -206,8 +222,12 @@ pub async fn post_project(
         }
 
         conn.interact(move |conn| {
-            insert_into(schema::submissions::table)
-                .values(&sub)
+            diesel::update(schema::submissions::table)
+                .filter(schema::submissions::id.eq(sub.id))
+                .set((
+                    schema::submissions::results.eq(sub.results),
+                    schema::submissions::grade.eq(sub.grade),
+                ))
                 .execute(conn)
         }).await;
     });

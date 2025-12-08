@@ -11,10 +11,11 @@ use axum::{
     middleware,
     routing::{get, post},
     Router,
-    serve
+    serve,
+    ServiceExt,
 };
 use deadpool_diesel::sqlite::{Manager, Pool, Runtime};
-use tower_http::services::ServeDir;
+use tower_http::services::ServeFile;
 
 use crate::auth::*;
 use crate::routes::*;
@@ -30,9 +31,10 @@ async fn main() {
 
     let app = Router::new()
         .route("/", get(get_program))
+        .route_service("/style.css", ServeFile::new("/olive/code/hive/static/style.css"))
+        .route_service("/hexagon.svg", ServeFile::new("/olive/code/hive/static/hexagon.svg"))
         .route("/{pr}", get(get_project))
         .route("/{pr}", post(post_project))
-        .fallback_service(ServeDir::new("static"))
         .layer(middleware::from_fn(auth_middleware))
         .with_state(pool);
 

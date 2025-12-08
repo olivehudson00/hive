@@ -37,11 +37,11 @@ pub struct ProjectWithoutTest {
     pub name: String,
     #[diesel(sql_type = diesel::sql_types::Integer)]
     pub grade: i32,
-    #[diesel(sql_type = diesel::sql_types::Integer)]
-    pub grade_max: i32,
+    #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Integer>)]
+    pub sub_grade: Option<i32>,
 }
 
-#[derive(Identifiable, Queryable, Selectable, Insertable)]
+#[derive(Identifiable, Queryable, Selectable, Insertable, Debug)]
 #[diesel(table_name = crate::schema::submissions)]
 pub struct Submission {
     pub id: i32,

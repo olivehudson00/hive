@@ -11,22 +11,6 @@ html {
 	background-position: 1.25em 0.75em;
 }
 
-.p {
-	color: green;
-
-	&::before {
-		content: "[PASS] ";
-	}
-}
-
-.f {
-	color: red;
-
-	&::before {
-		content: "[FAIL] ";
-	}
-}
-
 html, body {
 	margin: 0;
 	padding: 0;
@@ -58,7 +42,7 @@ a {
 
 div {
 	display: flex;
-	& > span {
+	& > span:nth-child(2) {
 		flex-grow: 1;
 		border-bottom: dotted 3px var(--font);
 		margin: 0 0.75em;
