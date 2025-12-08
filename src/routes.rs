@@ -199,13 +199,6 @@ pub async fn post_project(
             .output()
             .await;
         path.pop();
-
-        let paths = std::fs::read_dir(&path).unwrap();
-
-        for path in paths {
-            println!("Name: {}", path.unwrap().path().display())
-        }
-
         std::fs::remove_dir_all(&path);
 
         sub.results = Some(String::new());

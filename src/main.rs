@@ -31,8 +31,8 @@ async fn main() {
 
     let app = Router::new()
         .route("/", get(get_program))
-        .route_service("/style.css", ServeFile::new("/olive/code/hive/static/style.css"))
-        .route_service("/hexagon.svg", ServeFile::new("/olive/code/hive/static/hexagon.svg"))
+        .route_service("/style.css", ServeFile::new("/var/www/hive/style.css"))
+        .route_service("/hexagon.svg", ServeFile::new("/var/www/hive/hexagon.svg"))
         .route("/{pr}", get(get_project))
         .route("/{pr}", post(post_project))
         .layer(middleware::from_fn(auth_middleware))
